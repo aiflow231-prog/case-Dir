@@ -9,7 +9,13 @@
  * - A rejected route cannot be revived without genuinely new evidence/authority.
  */
 
-import { AdversarialReviewItem, RouteItem, RouteStatus } from '../types';
+import {
+  AdversarialReviewItem,
+  ConclusionLedgerState,
+  CorrectionEntry,
+  RouteItem,
+  RouteStatus
+} from '../types';
 
 export const ADVERSARIAL_BAR_KEYS = [
   'Limitation',
@@ -135,3 +141,79 @@ export function evaluateAdversarialReview(
     survival_verdict: survivalVerdict
   };
 }
+
+export interface RoutePromotionValidation {
+  canPromote: boolean;
+  reasons: string[];
+  fatalUnmetElements: string[];
+}
+
+export function validateRoutePromotion(route: RouteItem): RoutePromotionValidation {
+  const reasons: string[] = [];
+
+  const fatalUnmet = route.required_elements.filter(
+    e => e.fatal_if_missing && (e.status === 'UNMET' || !e.is_verified)
+  );
+  if (fatalUnmet.length > 0) {
+    reasons.push(
+      `Refused: ${fatalUnmet.length} fatal element(s) remain unmet (${fatalUnmet.map(e => e.element_name).join(', ')}).`
+    );
+  }
+
+  const contradicted = route.required_elements.filter(e => e.status === 'CONTRADICTED');
+  if (contradicted.length > 0) {
+    reasons.push(
+      `Refused: ${contradicted.length} required element(s) are contradicted by primary record.`
+    );
+  }
+
+  if (route.status === 'DEAD' || route.status === 'REJECTED') {
+    reasons.push(
+      `Refused: Route status is ${route.status}. Dead or rejected routes cannot be promoted to ACTIVE.`
+    );
+  }
+
+  if (route.deadline && !route.deadline.commencement_proved) {
+    reasons.push('Refused: Statutory deadline commencement date is unproved.');
+  }
+
+  return {
+    canPromote: reasons.length === 0,
+    reasons,
+    fatalUnmetElements: fatalUnmet.map(e => e.element_name)
+  };
+}
+
+export function applyCorrectionToLedger(
+  ledger: ConclusionLedgerState,
+  correction: Omit<CorrectionEntry, 'id' | 'timestamp'>
+): {
+  updatedLedger: ConclusionLedgerState;
+  persisted: boolean;
+} {
+  const newEntry: CorrectionEntry = {
+    ...correction,
+    id: `CORR_${Date.now()}`,
+    timestamp: new Date().toISOString()
+  };
+
+  const updatedLedger: ConclusionLedgerState = {
+    ...ledger,
+    corrections: [newEntry, ...ledger.corrections],
+    previous_conclusions: [ledger.current_committed_conclusion, ...ledger.previous_conclusions],
+    current_committed_conclusion: correction.corrected_conclusion,
+    last_updated: newEntry.timestamp
+  };
+
+  const persisted =
+    updatedLedger.corrections.length === ledger.corrections.length + 1 &&
+    updatedLedger.corrections[0].corrected_conclusion === correction.corrected_conclusion &&
+    updatedLedger.current_committed_conclusion === correction.corrected_conclusion &&
+    updatedLedger.previous_conclusions[0] === ledger.current_committed_conclusion;
+
+  return {
+    updatedLedger,
+    persisted
+  };
+}
+

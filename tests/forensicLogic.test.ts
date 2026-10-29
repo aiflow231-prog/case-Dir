@@ -9,8 +9,15 @@ import assert from 'node:assert/strict';
 import { detectProhibitedJump } from '../src/utils/prohibitedJumps';
 import { reconcileFinancialEntries } from '../src/utils/financialReconciliation';
 import { auditChronologyEvents } from '../src/utils/chronologyEngine';
-import { calculateSurvivalScore, validateRouteActionPermitted } from '../src/utils/routeValidator';
+import {
+  calculateSurvivalScore,
+  validateRouteActionPermitted,
+  validateRoutePromotion,
+  applyCorrectionToLedger
+} from '../src/utils/routeValidator';
 import { evaluateResearchLoopContinuation } from '../src/utils/boundedLoop';
+import { TEST_SUITE } from '../src/data/testScenarios';
+import { PILOT_CONCLUSION_LEDGER, PILOT_ROUTES } from '../src/data/bahrainPilot';
 import { ChronologyEvent, FinancialEntry, RouteItem } from '../src/types';
 
 test('Prohibited Jump Detector identifies forbidden assumptions', () => {
@@ -219,3 +226,67 @@ test('Bounded Research Loop stops upon saturation (2 cycles with no material cha
   assert.equal(decision.shouldContinue, false);
   assert.ok(decision.stopReason?.includes('SATURATION DETECTED'));
 });
+
+test('DEAD route is blocked from both investigation and substantive filing', () => {
+  const deadRoute = PILOT_ROUTES.find(r => r.route_id === 'R-05')!;
+  assert.equal(deadRoute.status, 'DEAD');
+
+  const filingCheck = validateRouteActionPermitted(deadRoute, 'SUBSTANTIVE_FILING');
+  assert.equal(filingCheck.permitted, false);
+  assert.ok(filingCheck.reason.includes('PROCEDURAL BAR'));
+
+  const investCheck = validateRouteActionPermitted(deadRoute, 'INVESTIGATIVE_STEP');
+  assert.equal(investCheck.permitted, false);
+  assert.ok(investCheck.reason.includes('DEAD'));
+  assert.ok(investCheck.reason.includes('barred'));
+
+  assert.equal(calculateSurvivalScore(deadRoute), 0);
+});
+
+test('ACTIVE promotion is refused when fatal elements remain unmet', () => {
+  // Test route with unmet fatal elements (like pilot route R-01)
+  const routeR01 = PILOT_ROUTES.find(r => r.route_id === 'R-01')!;
+  const promo = validateRoutePromotion(routeR01);
+
+  assert.equal(promo.canPromote, false);
+  assert.ok(promo.reasons.length > 0);
+  assert.ok(promo.reasons.some(r => r.includes('fatal element')));
+});
+
+test('Conclusion Ledger persists corrections and updates committed conclusion', () => {
+  const initialLedger = PILOT_CONCLUSION_LEDGER;
+  const initialCorrectionsCount = initialLedger.corrections.length;
+  const initialCommitted = initialLedger.current_committed_conclusion;
+
+  const correctionPayload = {
+    type: 'I_OVERSTATED_THIS' as const,
+    exact_earlier_claim: 'Portal draft save might toll statutory limitation.',
+    corrected_conclusion: 'Ministerial Decree No. 27/2021 Article 4 establishes draft saves have zero legal tolling effect.',
+    evidence_causing_correction: 'Ministerial Decree No. 27/2021 Articles 4 & 7',
+    effect_on_roadmap: 'Downgraded Ordinary Appeal to EVIDENCE-DEPENDENT.'
+  };
+
+  const { updatedLedger, persisted } = applyCorrectionToLedger(initialLedger, correctionPayload);
+
+  assert.equal(persisted, true);
+  assert.equal(updatedLedger.corrections.length, initialCorrectionsCount + 1);
+  assert.equal(updatedLedger.corrections[0].type, 'I_OVERSTATED_THIS');
+  assert.equal(updatedLedger.current_committed_conclusion, correctionPayload.corrected_conclusion);
+  assert.equal(updatedLedger.previous_conclusions[0], initialCommitted);
+});
+
+test('All 8 browser acceptance scenarios in TEST_SUITE execute and pass with derived assertions', () => {
+  assert.equal(TEST_SUITE.length, 8);
+
+  for (const scenario of TEST_SUITE) {
+    const outcome = scenario.executeTest();
+    assert.equal(
+      outcome.passed,
+      true,
+      `Scenario ${scenario.id} failed: ${outcome.actualFinding}`
+    );
+    assert.ok(outcome.assertionLog.length > 0);
+    assert.equal(outcome.actualFinding, scenario.expectedResult.verdict);
+  }
+});
+

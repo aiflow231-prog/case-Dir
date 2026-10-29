@@ -40,7 +40,11 @@ import {
   PILOT_ROADMAP,
   PILOT_ROUTES
 } from '../data/bahrainPilot';
-import { calculateSurvivalScore } from '../utils/routeValidator';
+import {
+  calculateSurvivalScore,
+  validateRoutePromotion,
+  applyCorrectionToLedger
+} from '../utils/routeValidator';
 import { evaluateResearchLoopContinuation } from '../utils/boundedLoop';
 
 export interface HumanApprovalRequest {
@@ -252,6 +256,20 @@ export const MatterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateRouteStatus = (routeId: string, newStatus: RouteStatus, reason: string) => {
     // Check if promoting to ACTIVE
     if (newStatus === 'ACTIVE') {
+      const targetRoute = routes.find(r => r.route_id === routeId);
+      if (targetRoute) {
+        const promo = validateRoutePromotion(targetRoute);
+        if (!promo.canPromote) {
+          logAuditEvent({
+            action_type: 'ROUTE_STATUS_CHANGE',
+            actor: 'Route Controller',
+            details: `Promotion of Route ${routeId} to ACTIVE refused: ${promo.reasons.join(' ')}`,
+            route_id: routeId
+          });
+          return;
+        }
+      }
+
       requestHumanApproval({
         action_name: `Upgrade Route ${routeId} to ACTIVE`,
         category: 'CHANGING_ROUTE_TO_ACTIVE',
@@ -288,19 +306,10 @@ export const MatterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const logCorrection = (correction: Omit<CorrectionEntry, 'id' | 'timestamp'>) => {
-    const newEntry: CorrectionEntry = {
-      ...correction,
-      id: `CORR_${Date.now()}`,
-      timestamp: new Date().toISOString()
-    };
-
-    setConclusionLedger(prev => ({
-      ...prev,
-      corrections: [newEntry, ...prev.corrections],
-      previous_conclusions: [prev.current_committed_conclusion, ...prev.previous_conclusions],
-      current_committed_conclusion: correction.corrected_conclusion,
-      last_updated: new Date().toISOString()
-    }));
+    setConclusionLedger(prev => {
+      const { updatedLedger } = applyCorrectionToLedger(prev, correction);
+      return updatedLedger;
+    });
 
     logAuditEvent({
       action_type: 'CORRECTION_LOGGED',

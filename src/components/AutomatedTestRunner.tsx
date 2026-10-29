@@ -79,7 +79,13 @@ export const AutomatedTestRunner: React.FC = () => {
           <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
             <span>Regression & Forensic Acceptance Test Suite</span>
             {totalRun > 0 && (
-              <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700">
+              <span
+                className={`text-xs font-mono px-2 py-0.5 rounded border ${
+                  passedCount === TEST_SUITE.length
+                    ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                    : 'bg-rose-950 text-rose-300 border-rose-700'
+                }`}
+              >
                 {passedCount} / {TEST_SUITE.length} PASSED
               </span>
             )}
@@ -208,7 +214,15 @@ export const AutomatedTestRunner: React.FC = () => {
                       <div className="space-y-1 font-mono text-[11px] text-slate-300 bg-black/50 p-2.5 rounded border border-slate-850">
                         {res.logs.map((log, i) => (
                           <div key={i} className="flex items-start gap-2">
-                            <span className="text-emerald-400">✓</span>
+                            <span
+                              className={
+                                log.includes('pass: false')
+                                  ? 'text-rose-400 font-bold'
+                                  : 'text-emerald-400'
+                              }
+                            >
+                              {log.includes('pass: false') ? '✗' : '✓'}
+                            </span>
                             <span>{log}</span>
                           </div>
                         ))}
